@@ -65,10 +65,6 @@ parser.add_argument('-p', '--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--world-size', default=-1, type=int,
-                    help='number of nodes for distributed training')
-parser.add_argument('--rank', default=-1, type=int,
-                    help='node rank for distributed training')
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--low-dim', default=128, type=int,
@@ -89,7 +85,7 @@ parser.add_argument('--cos', action='store_true',
 
 parser.add_argument('--num-cluster', default='400, 500, 600', type=str,
                     help='number of clusters')
-parser.add_argument('--warmup-epoch', default=20, type=int,
+parser.add_argument('--warmup-epoch', default=1, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
 parser.add_argument('--exp-dir', default='/user_data/junruz/experiment_pcl', type=str,
                     help='experiment directory')
@@ -106,7 +102,6 @@ def main():
     print('pcl_r: {}'.format(args.pcl_r))
     print('epochs: {}'.format(args.epochs))
     print('num of clusters: {}'.format(args.num_cluster))
-    print('loss: {}'.format(args.loss))
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -129,7 +124,7 @@ def main():
     model = pcl.builder.MoCo(
         models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
-    print(model)
+    # print(model)
 
 
     model.cuda()
@@ -137,7 +132,7 @@ def main():
 
     # define loss function (criterion) and optimizer
 
-    criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+    criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
@@ -146,12 +141,6 @@ def main():
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
             args.start_epoch = checkpoint['epoch']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -234,7 +223,7 @@ def main():
         eval_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in tqdm(range(args.start_epoch, args.epochs)):
 
         cluster_result = None
         if epoch >= args.warmup_epoch:
@@ -250,14 +239,13 @@ def main():
                 cluster_result['centroids'].append(torch.zeros(int(num_cluster), args.low_dim).cuda())
                 cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda())
 
-            if args.gpu == 0:
-                features[
-                    torch.norm(features, dim=1) > 1.5] /= 2  # account for the few samples that are computed twice
-                features = features.numpy()
-                cluster_result = run_kmeans(features, args)  # run kmeans clustering on master node
-                # save the clustering result
-                if (epoch + 1) % 10 == 0:
-                    torch.save(cluster_result, os.path.join(args.exp_dir, 'clusters_%d' % epoch))
+
+            features[torch.norm(features, dim=1) > 1.5] /= 2  # account for the few samples that are computed twice
+            features = features.numpy()
+            cluster_result = run_kmeans(features, args)  # run kmeans clustering on master node
+            # save the clustering result
+            if (epoch + 1) % 10 == 0:
+                torch.save(cluster_result, os.path.join(args.exp_dir, 'clusters_%d' % epoch))
 
         adjust_learning_rate(optimizer, epoch, args)
 
@@ -282,7 +270,6 @@ def main():
     print('pcl_r: {}'.format(args.pcl_r))
     print('epochs: {}'.format(args.epochs))
     print('num of clusters: {}'.format(args.num_cluster))
-    print('loss: {}'.format(args.loss))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
@@ -377,12 +364,14 @@ def run_kmeans(x, args):
         clus.max_points_per_centroid = 1000
         clus.min_points_per_centroid = 4
 
-        res = faiss.StandardGpuResources()
-        cfg = faiss.GpuIndexFlatConfig()
-        cfg.useFloat16 = False
-        cfg.device = 0
-        index = faiss.GpuIndexFlatL2(res, d, cfg)
+        # res = faiss.StandardGpuResources()
+        # cfg = faiss.GpuIndexFlatConfig()
+        # cfg.useFloat16 = False
+        # cfg.device = 0
+        # index = faiss.GpuIndexFlatL2(res, d, cfg)
+        index = faiss.IndexFlatL2(d)
 
+        # clus.train(x, index)
         clus.train(x, index)
 
         D, I = index.search(x, 1)  # for each sample, find cluster distance and assignments
