@@ -41,9 +41,9 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                          ' | '.join(model_names) +
                          ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=100, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -85,7 +85,7 @@ parser.add_argument('--cos', action='store_true',
 
 parser.add_argument('--num-cluster', default='400, 500, 600', type=str,
                     help='number of clusters')
-parser.add_argument('--warmup-epoch', default=1, type=int,
+parser.add_argument('--warmup-epoch', default=10, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
 parser.add_argument('--exp-dir', default='/user_data/junruz/experiment_pcl', type=str,
                     help='experiment directory')
@@ -153,9 +153,11 @@ def main():
 
     # Data loading code
     # for the whole dataset
-    traindir = os.path.join(args.data, 'imagenette2', 'train')
+    # traindir = os.path.join(args.data, 'imagenette2', 'train')
+    traindir = os.path.join(args.data, 'train')
     if args.shape:
-        evaldir = os.path.join(args.data, 'imagenette_masks', 'train')
+        # evaldir = os.path.join(args.data, 'imagenette_masks', 'train')
+        evaldir = os.path.join(args.data, 'shape')
     else:
         evaldir = traindir
 
@@ -260,7 +262,7 @@ def main():
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'state_dict_unwrapped': model.module.state_dict()
+                # 'state_dict_unwrapped': model.module.state_dict()
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir, epoch))
 
     print('arch: {}'.format(args.arch))
