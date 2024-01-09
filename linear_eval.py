@@ -62,11 +62,11 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
-
-
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to pretrained checkpoint')
 parser.add_argument('--id', type=str, default='')
+parser.add_argument('--stylized', action='store_true',
+                    help='test on stylized val set')
 
 
 def main():
@@ -88,7 +88,7 @@ def main():
         
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch](num_classes=10)
+    model = models.__dict__[args.arch](num_classes=100)
     # print(model)
 
     # freeze all layers but the last fc
@@ -157,8 +157,14 @@ def main():
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
+    if args.stylized:
+        traindir = os.path.join(args.data, 'train_stylized_0')
+        valdir = os.path.join(args.data, 'val_stylized_0')
+    else:
+        traindir = os.path.join(args.data, 'train')
+        valdir = os.path.join(args.data, 'val')
+    print(f'val dir: {valdir}')
+
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 

@@ -60,12 +60,45 @@ def split(data_dir, save_dir, ratio):
         print(len(val_img_list))
         print(len(shape_img_list))
 
+def split_orginal(data_dir, save_dir, ratio):
+    img_dir = os.path.join(data_dir, 'img')
+    shape_dir = os.path.join(data_dir, 'shape')
+
+    save_train_dir = os.path.join(save_dir, 'train')
+    save_val_dir = os.path.join(save_dir, 'val')
+    save_shape_dir = os.path.join(save_dir, 'shape')
+    
+    cats = sorted(os.listdir(img_dir))
+    for cat in tqdm(cats):
+        os.makedirs(os.path.join(save_train_dir, cat), exist_ok=True)
+        os.makedirs(os.path.join(save_val_dir, cat), exist_ok=True)
+        os.makedirs(os.path.join(save_shape_dir, cat), exist_ok=True)
+        img_list = os.listdir(os.path.join(img_dir, cat))
+        print(f'Total imgs: {len(img_list)}')
+        n_imgs = len(img_list)
+        n_train = int(ratio * n_imgs)
+        train_list = sample(img_list, n_train)
+        val_list = list(set(img_list) - set(train_list))
+        for train_img in train_list:
+            shutil.copy2(os.path.join(img_dir, cat, train_img), os.path.join(save_train_dir, cat, train_img))
+            shutil.copy2(os.path.join(shape_dir, cat, train_img), os.path.join(save_shape_dir, cat, train_img))
+        for val_img in val_list:
+            shutil.copy2(os.path.join(img_dir, cat, val_img), os.path.join(save_val_dir, cat, val_img))
+    for cat in cats:
+        print(cat)
+        train_img_list = os.listdir(os.path.join(save_train_dir, cat))
+        val_img_list = os.listdir(os.path.join(save_val_dir, cat))
+        shape_img_list = os.listdir(os.path.join(save_shape_dir, cat))
+        print(len(train_img_list))
+        print(len(val_img_list))
+        print(len(shape_img_list))
+
 
 if __name__ == "__main__":
     # all_img()
 
-    data_dir = "/user_data/junruz/IN-shape-10-all/set_2"
-    save_dir = "/user_data/junruz/IN-shape-10-73/set_2/split_0"
+    data_dir = "/user_data/junruz/IN100-all/IN100_all"
+    save_dir = "/user_data/junruz/IN100_73/2"
     ratio = 0.7
 
     split(data_dir, save_dir, ratio)
