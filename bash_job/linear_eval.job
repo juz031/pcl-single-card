@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH --job-name=eval
+#SBATCH --time=1-00:00:00
+#SBATCH -p gpu
+#SBATCH --gres=gpu:1
+#SBATCH --mem=32G
+#SBATCH --cpus-per-gpu=8
+
+
+echo "SLURM_JOBID: " $SLURM_JOBID
+module load anaconda3
+source activate juz01
+cd pcl-single-card/
+python linear_eval.py --workers 8 --pretrained /user_data/junruz/pcl-single-card/pretrain/shape_IN100_73_400e_0/checkpoint_0349.pth.tar -a resnet18 --epochs 100 --lr 3.0 --batch-size 256 --id shape_400_350  /user_data/junruz/IN100_73/0
