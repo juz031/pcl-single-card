@@ -82,7 +82,7 @@ def main():
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
     
-    args.tb_folder = '/user_data/junruz/pcl-single-card/linear/{}/log'.format(args.id)
+    args.tb_folder = './linear/{}/log'.format(args.id)
     if not os.path.isdir(args.tb_folder):
         os.makedirs(args.tb_folder, exist_ok=True)
         
@@ -212,7 +212,7 @@ def main():
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
                 # 'state_dict_unwrapped': model.module.state_dict()
-            }, filename='/user_data/junruz/pcl-single-card/linear/{}/checkpoint_{:04d}.pth.tar'.format(args.id,epoch))
+            }, filename='./linear/{}/checkpoint_{:04d}.pth.tar'.format(args.id,epoch))
         if epoch == args.start_epoch:
             sanity_check(model.state_dict(), args.pretrained)
     
