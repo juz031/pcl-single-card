@@ -34,16 +34,16 @@ model_names = sorted(name for name in models.__dict__
                      and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
+parser.add_argument('data', metavar='DIR', default='/user_data/junruz/imagenette2',
                     help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
                          ' | '.join(model_names) +
                          ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=50, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -67,9 +67,9 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
-parser.add_argument('--low-dim', default=128, type=int,
+parser.add_argument('--low-dim', default=256, type=int,
                     help='feature dimension (default: 128)')
-parser.add_argument('--pcl-r', default=16384, type=int,
+parser.add_argument('--pcl-r', default=1024, type=int,
                     help='queue size; number of negative pairs; needs to be smaller than num_cluster (default: 16384)')
 parser.add_argument('--moco-m', default=0.999, type=float,
                     help='moco momentum of updating key encoder (default: 0.999)')
@@ -83,18 +83,17 @@ parser.add_argument('--aug-plus', action='store_true',
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
-parser.add_argument('--num-cluster', default='2000, 4000, 6000', type=str,
-                    help='number of clusters')
 parser.add_argument('--warmup-epoch', default=20, type=int,
                     help='number of warm-up epochs to only train with InfoNCE loss')
 parser.add_argument('--exp-dir', default='/user_data/junruz/experiment_pcl', type=str,
                     help='experiment directory')
-parser.add_argument('--shape_only', action='store_true',
-                    help='Only use ShapeProtoNCE')
 parser.add_argument('--shape', action='store_true',
                     help='Use shape to cluster')
-parser.add_argument('--faissgpu', action='store_true',
-                    help='Use faiss gpu')
+parser.add_argument('--shape_weight', type=float, default=1.0, help="weight of the shape term in calculating loss")
+
+# parser.add_argument('--shape', default=True, type=bool,
+#                     help='Use shape to cluster')
+
 
 
 def main():
@@ -105,7 +104,6 @@ def main():
     print('batch_size: {}'.format(args.batch_size))
     print('pcl_r: {}'.format(args.pcl_r))
     print('epochs: {}'.format(args.epochs))
-    print('num of clusters: {}'.format(args.num_cluster))
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -118,16 +116,18 @@ def main():
                       'from checkpoints.')
 
 
-    args.num_cluster = args.num_cluster.split(',')
 
     if not os.path.exists(args.exp_dir):
         os.mkdir(args.exp_dir)
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = pcl.builder.MoCo(
+
+
+    model = pcl.builder.ShapeMoCo(
         models.__dict__[args.arch],
         args.low_dim, args.pcl_r, args.moco_m, args.temperature, args.mlp)
+    
     # print(model)
 
 
@@ -204,63 +204,38 @@ def main():
         normalize
     ])
 
-    shape_augmentation = [
-        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize
-    ]
+    # shape_augmentation = transforms.Compose([
+    #     transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+    #     transforms.RandomGrayscale(p=0.2),
+    #     transforms.RandomApply([pcl.loader.GaussianBlur([.1, 2.])], p=0.5),
+    #     transforms.RandomHorizontalFlip(),
+    #     transforms.ToTensor(),
+    #     normalize
+    # ])
 
     train_dataset = pcl.loader.ImageFolderInstance(
         traindir,
         pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
 
-    eval_dataset = pcl.loader.ImageFolderInstance(
+    shape_dataset = pcl.loader.ImageFolderInstance(
         evaldir,
         eval_augmentation)
+    
+    dataset = pcl.loader.ShapeDataset(train_dataset, shape_dataset)
+    # else:
+    #     dataset = train_dataset
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True,
+        dataset, batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True, drop_last=True)
 
-    # dataloader for center-cropped images, use larger batch size to increase speed
-    eval_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size * 2, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
 
     for epoch in tqdm(range(args.start_epoch, args.epochs)):
-
-        cluster_result = None
-        if epoch >= args.warmup_epoch:
-            # compute momentum features for center-cropped images
-            features = compute_features(eval_loader, model, args)
-            # if (epoch+1)%10==0:
-            #     torch.save(features,os.path.join(args.exp_dir, 'features_%d'%epoch))
-
-            # placeholder for clustering result
-            cluster_result = {'im2cluster': [], 'centroids': [], 'density': []}
-            for num_cluster in args.num_cluster:
-                cluster_result['im2cluster'].append(torch.zeros(len(eval_dataset), dtype=torch.long).cuda())
-                cluster_result['centroids'].append(torch.zeros(int(num_cluster), args.low_dim).cuda())
-                cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda())
-
-
-            features[torch.norm(features, dim=1) > 1.5] /= 2  # account for the few samples that are computed twice
-            features = features.numpy()
-            if args.faissgpu:
-                cluster_result = run_kmeans_gpu(features, args)
-            else:
-                cluster_result = run_kmeans_cpu(features, args)  # run kmeans clustering on master node
-            # save the clustering result
-            if (epoch + 1) % 10 == 0:
-                torch.save(cluster_result, os.path.join(args.exp_dir, 'clusters_%d' % epoch))
 
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args, cluster_result)
+        train(train_loader, model, criterion, optimizer, epoch, args)
         # print(traindir)
         # print(evaldir)
 
@@ -279,7 +254,6 @@ def main():
     print('batch_size: {}'.format(args.batch_size))
     print('pcl_r: {}'.format(args.pcl_r))
     print('epochs: {}'.format(args.epochs))
-    print('num of clusters: {}'.format(args.num_cluster))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result=None):
@@ -298,35 +272,25 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
     model.train()
 
     end = time.time()
-    for i, (images, index) in enumerate(train_loader):
+    for i, ((images, index), (shapes, __)) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        images[0] = images[0].cuda()
-        images[1] = images[1].cuda()
+        images[0] = images[0].cuda(non_blocking=True)
+        images[1] = images[1].cuda(non_blocking=True)
+        shapes = shapes.cuda(non_blocking=True)
 
         # compute output
-        output, target, output_proto, target_proto = model(im_q=images[0], im_k=images[1],
-                                                           cluster_result=cluster_result, index=index)
+        output, output_s, target, target_s = model(im_q=images[0], im_k=images[1], sp_k=shapes)
+                                                    
 
         # InfoNCE loss
-        loss = criterion(output, target)
-
-        # ProtoNCE loss
-        if output_proto is not None:
-            loss_proto = 0
-            for proto_out, proto_target in zip(output_proto, target_proto):
-                loss_proto += criterion(proto_out, proto_target)
-                accp = accuracy(proto_out, proto_target)[0]
-                acc_proto.update(accp[0], images[0].size(0))
-
-            # average loss across all sets of prototypes
-            loss_proto /= len(args.num_cluster)
-            
-            if args.shape_only:
-                loss = loss_proto
-            else:
-                loss += loss_proto
+        loss_moco = criterion(output, target)
+        if args.shape:
+            loss_shape = criterion(output_s, target_s)
+            loss = loss_moco + args.shape_weight * loss_shape
+        else:
+            loss = loss_moco
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0]
@@ -345,163 +309,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
             progress.display(i)
 
 
-def compute_features(eval_loader, model, args):
-    print('Computing features...')
-    model.eval()
-    features = torch.zeros(len(eval_loader.dataset), args.low_dim).cuda()
-    for i, (images, index) in enumerate(tqdm(eval_loader)):
-        with torch.no_grad():
-            images = images.cuda()
-            feat = model(images, is_eval=True)
-            features[index] = feat
-    return features.cpu()
 
 
-def run_kmeans_cpu(x, args):
-    """
-    Args:
-        x: data to be clustered
-    """
-
-    print('performing kmeans clustering')
-    results = {'im2cluster': [], 'centroids': [], 'density': []}
-
-    for seed, num_cluster in enumerate(args.num_cluster):
-        # intialize faiss clustering parameters
-        d = x.shape[1]
-        k = int(num_cluster)
-        clus = faiss.Clustering(d, k)
-        clus.verbose = True
-        clus.niter = 20
-        clus.nredo = 5
-        clus.seed = seed
-        clus.max_points_per_centroid = 1000
-        clus.min_points_per_centroid = 4
-        index = faiss.IndexFlatL2(d)
-
-        # res = faiss.StandardGpuResources()
-        # cfg = faiss.GpuIndexFlatConfig()
-        # cfg.useFloat16 = False
-        # cfg.device = 0
-        # index = faiss.GpuIndexFlatL2(res, d, cfg)
-        
-
-        # clus.train(x, index)
-        clus.train(x, index)
-
-        D, I = index.search(x, 1)  # for each sample, find cluster distance and assignments
-        im2cluster = [int(n[0]) for n in I]
-
-        # get cluster centroids
-        centroids = faiss.vector_to_array(clus.centroids).reshape(k, d)
-
-        # sample-to-centroid distances for each cluster
-        Dcluster = [[] for c in range(k)]
-        for im, i in enumerate(im2cluster):
-            Dcluster[i].append(D[im][0])
-
-        # concentration estimation (phi)
-        density = np.zeros(k)
-        for i, dist in enumerate(Dcluster):
-            if len(dist) > 1:
-                d = (np.asarray(dist) ** 0.5).mean() / np.log(len(dist) + 10)
-                density[i] = d
-
-                # if cluster only has one point, use the max to estimate its concentration
-        dmax = density.max()
-        for i, dist in enumerate(Dcluster):
-            if len(dist) <= 1:
-                density[i] = dmax
-
-        density = density.clip(np.percentile(density, 10),
-                               np.percentile(density, 90))  # clamp extreme values for stability
-        density = args.temperature * density / density.mean()  # scale the mean to temperature
-
-        # convert to cuda Tensors for broadcast
-        centroids = torch.Tensor(centroids).cuda()
-        centroids = nn.functional.normalize(centroids, p=2, dim=1)
-
-        im2cluster = torch.LongTensor(im2cluster).cuda()
-        density = torch.Tensor(density).cuda()
-
-        results['centroids'].append(centroids)
-        results['density'].append(density)
-        results['im2cluster'].append(im2cluster)
-
-    return results
-
-
-def run_kmeans_gpu(x, args):
-    """
-    Args:
-        x: data to be clustered
-    """
-
-    print('performing kmeans clustering')
-    results = {'im2cluster': [], 'centroids': [], 'density': []}
-
-    for seed, num_cluster in enumerate(args.num_cluster):
-        # intialize faiss clustering parameters
-        d = x.shape[1]
-        k = int(num_cluster)
-        clus = faiss.Clustering(d, k)
-        clus.verbose = True
-        clus.niter = 20
-        clus.nredo = 5
-        clus.seed = seed
-        clus.max_points_per_centroid = 1000
-        clus.min_points_per_centroid = 4
-
-        res = faiss.StandardGpuResources()
-        cfg = faiss.GpuIndexFlatConfig()
-        cfg.useFloat16 = False
-        cfg.device = 0
-        index = faiss.GpuIndexFlatL2(res, d, cfg)
-        
-
-        # clus.train(x, index)
-        clus.train(x, index)
-
-        D, I = index.search(x, 1)  # for each sample, find cluster distance and assignments
-        im2cluster = [int(n[0]) for n in I]
-
-        # get cluster centroids
-        centroids = faiss.vector_to_array(clus.centroids).reshape(k, d)
-
-        # sample-to-centroid distances for each cluster
-        Dcluster = [[] for c in range(k)]
-        for im, i in enumerate(im2cluster):
-            Dcluster[i].append(D[im][0])
-
-        # concentration estimation (phi)
-        density = np.zeros(k)
-        for i, dist in enumerate(Dcluster):
-            if len(dist) > 1:
-                d = (np.asarray(dist) ** 0.5).mean() / np.log(len(dist) + 10)
-                density[i] = d
-
-                # if cluster only has one point, use the max to estimate its concentration
-        dmax = density.max()
-        for i, dist in enumerate(Dcluster):
-            if len(dist) <= 1:
-                density[i] = dmax
-
-        density = density.clip(np.percentile(density, 10),
-                               np.percentile(density, 90))  # clamp extreme values for stability
-        density = args.temperature * density / density.mean()  # scale the mean to temperature
-
-        # convert to cuda Tensors for broadcast
-        centroids = torch.Tensor(centroids).cuda()
-        centroids = nn.functional.normalize(centroids, p=2, dim=1)
-
-        im2cluster = torch.LongTensor(im2cluster).cuda()
-        density = torch.Tensor(density).cuda()
-
-        results['centroids'].append(centroids)
-        results['density'].append(density)
-        results['im2cluster'].append(im2cluster)
-
-    return results
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):

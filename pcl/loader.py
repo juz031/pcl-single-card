@@ -1,6 +1,7 @@
 from PIL import ImageFilter
 import random
 import torchvision.datasets as datasets
+from torch.utils.data import Dataset, DataLoader
 
 
 class TwoCropsTransform:
@@ -34,3 +35,16 @@ class ImageFolderInstance(datasets.ImageFolder):
         if self.transform is not None:
             sample = self.transform(sample)
         return sample, index
+
+class ShapeDataset(Dataset):
+    def __init__(self, datasetA, datasetB):
+        self.datasetA = datasetA
+        self.datasetB = datasetB
+        
+    def __getitem__(self, index):
+        xA = self.datasetA[index]
+        xB = self.datasetB[index]
+        return xA, xB
+    
+    def __len__(self):
+        return len(self.datasetA)
