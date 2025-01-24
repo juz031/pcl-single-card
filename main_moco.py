@@ -162,7 +162,8 @@ def main():
     traindir = os.path.join(args.data, 'train')
     if args.shape:
         # evaldir = os.path.join(args.data, 'imagenette_masks', 'train')
-        evaldir = os.path.join(args.data, 'shape')
+        # evaldir = os.path.join(args.data, 'shape_move')
+        evaldir = os.path.join(args.data, 'shad')
     else:
         evaldir = traindir
 
@@ -217,13 +218,19 @@ def main():
         traindir,
         pcl.loader.TwoCropsTransform(transforms.Compose(augmentation)))
 
-    shape_dataset = pcl.loader.ImageFolderInstance(
-        evaldir,
-        eval_augmentation)
+    # train_dataset = pcl.loader.ImageFolderInstance(
+    #     traindir,
+    #     pcl.loader.ThreeCropsTransform(transforms.Compose(augmentation)))
     
-    dataset = pcl.loader.ShapeDataset(train_dataset, shape_dataset)
-    # else:
-    #     dataset = train_dataset
+
+    if args.shape:
+        shape_dataset = pcl.loader.ImageFolderInstance(
+            evaldir,
+            eval_augmentation)
+        
+        dataset = pcl.loader.ShapeDataset(train_dataset, shape_dataset)
+    else:
+        dataset = train_dataset
 
     train_loader = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True,
@@ -273,11 +280,13 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
 
     end = time.time()
     for i, ((images, index), (shapes, __)) in enumerate(train_loader):
+    # for i, (images, index) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
         images[0] = images[0].cuda(non_blocking=True)
         images[1] = images[1].cuda(non_blocking=True)
+        # images[2] = images[2].cuda(non_blocking=True)
         shapes = shapes.cuda(non_blocking=True)
 
         # compute output
@@ -285,12 +294,18 @@ def train(train_loader, model, criterion, optimizer, epoch, args, cluster_result
                                                     
 
         # InfoNCE loss
-        loss_moco = criterion(output, target)
-        if args.shape:
-            loss_shape = criterion(output_s, target_s)
-            loss = loss_moco + args.shape_weight * loss_shape
+        # loss_moco = criterion(output, target)
+        loss_moco1 = criterion(output, target)
+
+        if (epoch + 1) <= args.warmup_epoch:
+            loss_moco2 = criterion(output_s, target_s)
+            loss = loss = loss_moco1 + loss_moco2
         else:
-            loss = loss_moco
+            if args.shape:
+                loss_shape = criterion(output_s, target_s)
+                loss = args.shape_weight * loss_shape
+            else:
+                loss = loss_moco1 + loss_moco2
 
         losses.update(loss.item(), images[0].size(0))
         acc = accuracy(output, target)[0]

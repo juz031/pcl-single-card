@@ -34,7 +34,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
 parser.add_argument('--epochs', default=100, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -67,6 +67,8 @@ parser.add_argument('--pretrained', default='', type=str,
 parser.add_argument('--id', type=str, default='')
 parser.add_argument('--stylized', action='store_true',
                     help='test on stylized val set')
+parser.add_argument('--finetune', default='', type=str,
+                    help='if use limited label', choices=['001', '01', ''])
 
 
 def main():
@@ -82,26 +84,26 @@ def main():
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
     
-    args.tb_folder = './linear/{}/log'.format(args.id)
+    args.tb_folder = '/user_data/junruz/pcl-single-card/linear/{}/log'.format(args.id)
     if not os.path.isdir(args.tb_folder):
         os.makedirs(args.tb_folder, exist_ok=True)
         
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch]()
+    model = models.__dict__[args.arch](num_classes=1000)
     # print(model)
 
     # freeze all layers but the last fc
-    for name, param in model.named_parameters():
-        if name not in ['fc.weight', 'fc.bias']:
-            param.requires_grad = False
+    if args.finetune == '':
+        for name, param in model.named_parameters():
+            if name not in ['fc.weight', 'fc.bias']:
+                param.requires_grad = False
     # init the fc layer
     model.fc.weight.data.normal_(mean=0.0, std=0.01)
     model.fc.bias.data.zero_()
     
     writer = SummaryWriter(args.tb_folder)
         
-    # load from pre-trained, before DistributedDataParallel constructor
     if args.pretrained:
         if os.path.isfile(args.pretrained):
             print("=> loading checkpoint '{}'".format(args.pretrained))
@@ -117,6 +119,13 @@ def main():
                     state_dict[k[len("encoder_q."):]] = state_dict[k]
                 # delete renamed or unused k
                 del state_dict[k]
+            # for k in list(state_dict.keys()):
+            #     if k.startswith('backbone'):
+            #         state_dict[k[len("backbone."):]] = state_dict[k]
+            #     # if k.startswith('classifier'):
+            #     #     new_k = k.replace('classifier', 'fc')
+            #     #     state_dict[new_k] = state_dict[k]
+            #     del state_dict[k]
 
             args.start_epoch = 0
             msg = model.load_state_dict(state_dict, strict=False)
@@ -134,11 +143,24 @@ def main():
     criterion = nn.CrossEntropyLoss().cuda()
 
     # optimize only the linear classifier
-    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    assert len(parameters) == 2  # fc.weight, fc.bias
-    optimizer = torch.optim.SGD(parameters, args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    if args.finetune == '':
+        parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+        assert len(parameters) == 2  # fc.weight, fc.bias
+        optimizer = torch.optim.SGD(parameters, args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.SGD([
+                                    {'params': model.conv1.parameters(), 'lr': 0.0001},
+                                    {'params': model.layer1.parameters(), 'lr': 0.0001},
+                                    {'params': model.layer2.parameters(), 'lr': 0.0001},
+                                    {'params': model.layer3.parameters(), 'lr': 0.0001},
+                                    {'params': model.layer4.parameters(), 'lr': 0.0001},
+                                    {'params': model.fc.parameters(), 'lr': args.lr}
+                                ], args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+        
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -157,12 +179,18 @@ def main():
     cudnn.benchmark = True
 
     # Data loading code
-    if args.stylized:
-        traindir = os.path.join(args.data, 'train_stylized_0')
-        valdir = os.path.join(args.data, 'val_stylized_0')
+    if args.finetune == '':
+        if args.stylized:
+            traindir = os.path.join(args.data, 'train_stylized_0')
+            valdir = os.path.join(args.data, 'val_stylized_0')
+        else:
+            traindir = os.path.join(args.data, 'train')
+            valdir = os.path.join(args.data, 'val')
     else:
-        traindir = os.path.join(args.data, 'train')
+        traindir = os.path.join(args.data, 'fine_tune_'+args.finetune)
         valdir = os.path.join(args.data, 'val')
+    
+    print(f'train dir: {traindir}')
     print(f'val dir: {valdir}')
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -205,16 +233,16 @@ def main():
         acc1 = validate(val_loader, model, criterion, args, writer, epoch)
 
 
-        if (epoch+1)%25==0:
+        if (epoch+1)%10==0:
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
                 # 'state_dict_unwrapped': model.module.state_dict()
-            }, filename='./linear/{}/checkpoint_{:04d}.pth.tar'.format(args.id,epoch))
-        if epoch == args.start_epoch:
-            sanity_check(model.state_dict(), args.pretrained)
+            }, filename='/user_data/junruz/pcl-single-card/linear/{}/checkpoint_{:04d}.pth.tar'.format(args.id,epoch))
+        # if epoch == args.start_epoch and args.finetune == '':
+        #     sanity_check(model.state_dict(), args.pretrained)
     
     # writer.close()
 
@@ -332,6 +360,12 @@ def sanity_check(state_dict, pretrained_weights):
 
     for k in list(state_dict.keys()):
         # only ignore fc layer
+        # if 'fc.weight' in k or 'fc.bias' in k:
+        #     continue
+        # # name in pretrained model
+        # k_pre = 'module.encoder_q.' + k[len('module.'):] \
+        #     if k.startswith('module.') else 'encoder_q.' + k
+
         if 'fc.weight' in k or 'fc.bias' in k:
             continue
         # name in pretrained model
@@ -389,7 +423,7 @@ def adjust_learning_rate(optimizer, epoch, args):
     """Decay the learning rate based on schedule"""
     lr = args.lr
     for milestone in args.schedule:
-        lr *= 0.1 if epoch >= milestone else 1.
+        lr *= 0.2 if epoch >= milestone else 1.
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 

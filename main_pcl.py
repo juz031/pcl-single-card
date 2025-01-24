@@ -264,7 +264,7 @@ def main():
         # print(traindir)
         # print(evaldir)
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 50 == 0:
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
@@ -272,6 +272,14 @@ def main():
                 'optimizer': optimizer.state_dict(),
                 # 'state_dict_unwrapped': model.module.state_dict()
             }, is_best=False, filename='{}/checkpoint_{:04d}.pth.tar'.format(args.exp_dir, epoch))
+        
+        save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                # 'state_dict_unwrapped': model.module.state_dict()
+            }, is_best=False, filename='{}/latest.pth.tar'.format(args.exp_dir))
 
     print('arch: {}'.format(args.arch))
     print('lr: {}'.format(args.lr))
