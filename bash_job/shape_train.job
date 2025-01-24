@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -N 1
-#SBATCH --job-name=Shape
+#SBATCH --job-name=IN100
 #SBATCH --time=10-00:00:00
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
@@ -13,4 +13,19 @@ echo "SLURM_JOBID: " $SLURM_JOBID
 module load anaconda3
 source activate juz01
 cd pcl-single-card/
-python main_pcl.py --shape --workers 8 -a resnet50 --lr 0.3 --batch-size 256  --low-dim 128 --epochs 200 --temperature 0.2 --pcl-r 16384 --mlp --aug-plus --exp-dir /user_data/junruz/pcl-single-card/pretrain/shape_IN1k_100e /user_data/junruz/imagenet
+python main_pcl.py /user_data/junruz/slt-10/slt10-img/ssl \
+--shape \
+--workers 4 \
+-a resnet18 \
+--lr 0.3 \
+--batch-size 128 \
+--low-dim 256 \
+--epochs 200  \
+--temperature 0.2 \
+--pcl-r 1024 \
+--num-cluster '2000, 4000, 6000' \
+--mlp \
+--aug-plus \
+--cos \
+--shape_only \
+--exp-dir /user_data/junruz/pcl-single-card/pretrain/ablation_STL10_73_200e_0
